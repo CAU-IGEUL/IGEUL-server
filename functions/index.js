@@ -173,9 +173,17 @@ exports.simplifyContents = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).ht
         }
         
         // 4. ✨ DB에서 가져온 프로필을 반영하여 AI 프롬프트 생성
+        const guidelineSentences = [];
+        if (userProfile.readingProfile && userProfile.readingProfile.includes('문장')) {
+            guidelineSentences.push('사용자는 긴 문장을 읽는 데 어려움을 느끼므로, 문장을 짧고 간결하게 나누어주세요.');
+        }
+        if (userProfile.readingProfile && userProfile.readingProfile.includes('어휘')) {
+            guidelineSentences.push('사용자는 어려운 한자어, 외래어, 전문 용어에 익숙하지 않으니, 이를 쉬운 단어로 풀어서 설명해주세요.');
+        }
+
         const simplificationGuidelines = `
-            - 사용자의 읽기 수준: '${userProfile.readingProfile.level}'
-            - 사용자가 자신 있는 분야: [${userProfile.knownTopics.join(', ')}]
+            - 읽기 프로필: ${guidelineSentences.join(' ')}
+            - 자신 있는 분야: [${userProfile.knownTopics.join(', ')}]
         `;
         
         const fullText = paragraphs.map(p => p.text).join('\\n\\n');
