@@ -130,11 +130,10 @@ exports.createUserProfile = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).h
     }
 });
 
-
 // ==================================================================
-// 3. [기존 API] 문장 순화 함수 (프로필 사용하도록 수정)
+// 3. [신규] 텍스트 순화 API (1단계: 순화 결과 즉시 반환)
 // ==================================================================
-exports.simplifyContents = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.onRequest(async (request, response) => {
+exports.simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.onRequest(async (request, response) => {
     response.set('Access-Control-Allow-Origin', '*');
     response.set('Access-Control-Allow-Methods', 'POST');
     response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -144,35 +143,28 @@ exports.simplifyContents = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).ht
         return;
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
     if (request.method !== 'POST') {
         return response.status(405).send('Only POST requests are allowed.');
     }
 
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
     try {
-        // 1. ✨ 사용자 인증 (이제 필수!)
         const user = await getAuthenticatedUser(request);
         const userId = user.uid;
-
-        // 2. ✨ Firestore에서 사용자 프로필 조회
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileSnap = await userProfileRef.get();
+        const userProfileSnap = await db.collection('users').doc(userId).get();
 
         if (!userProfileSnap.exists) {
-            // 프로필이 없으면 순화를 진행할 수 없음
             return response.status(404).json({ status: "error", message: "프로필이 없습니다. 먼저 프로필을 설정해주세요." });
         }
         
         const userProfile = userProfileSnap.data();
-        
-        // 3. 요청 본문에서 텍스트 데이터 추출
         const { title, paragraphs } = request.body;
+
         if (!title || !paragraphs || !Array.isArray(paragraphs)) {
             return response.status(400).send('Invalid request data.');
         }
-        
-        // 4. ✨ DB에서 가져온 프로필을 반영하여 AI 프롬프트 생성
+
         const guidelineSentences = [];
         if (userProfile.readingProfile && userProfile.readingProfile.includes('문장')) {
             guidelineSentences.push('사용자는 긴 문장을 읽는 데 어려움을 느끼므로, 문장을 짧고 간결하게 나누어주세요.');
@@ -186,47 +178,39 @@ exports.simplifyContents = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).ht
             - 자신 있는 분야: [${userProfile.knownTopics.join(', ')}]
         `;
         
-        const fullText = paragraphs.map(p => p.text).join('\\n\\n');
+        const originalFullText = paragraphs.map(p => p.text).join('\\n\\n');
 
-        // 5. 프롬프트 수정
-        const promptContent = `
+        // --- 1단계: 텍스트 순화 요청 ---
+        const promptForSimplification = `
             ## 역할 (Persona)
-            당신은 전문 편집자이자 언어 분석가입니다. 당신의 임무는 사용자의 개인 프로필을 바탕으로 텍스트를 맞춤형으로 순화하고, 그 '작업의 근거'를 객관적인 리포트로 제출하는 것입니다.
+            당신은 전문 편집자입니다. 사용자의 프로필을 바탕으로 원문 텍스트를 맞춤형으로 순화하세요.
 
             ## 사용자 프로필
             ${simplificationGuidelines}
 
             ## 지침
-            - 사용자의 읽기 수준에 맞춰 문장의 난이도를 조절하세요. (예: 'beginner'는 매우 쉽게)
+            - 사용자의 읽기 수준에 맞춰 문장의 난이도를 조절하세요.
             - 단, 본문의 주제가 사용자가 '자신 있는 분야' 목록에 포함될 경우, 전문 용어를 굳이 순화하지 말고 그대로 사용하세요.
-            
-            ## 핵심 규칙 (CRITICAL RULE)
-            1.  **언어 유지**: 원문이 한국어이므로, 결과물도 반드시 한국어로 작성하세요.
-            2.  **의미 보존**: 원문의 핵심 의미를 절대 왜곡하지 마세요.
-            3.  **리포트 제출 (필수!)**: \`analysis_report\` 객체에 원문과 순화된 글을 비교 분석한 객관적인 데이터를 채워야 합니다.
-                -   \`vocabulary_level_original\`: 원문의 어휘 수준 (예: '대학생 수준')
-                -   \`vocabulary_level_simplified\`: 순화된 글의 어휘 수준 (예: '고등학생 수준')
-                -   \`readability_improvement_score\`: AI가 판단하는 가독성 향상 점수 (1-100점).
-                -   \`key_simplifications\`: 순화를 위해 수행한 가장 중요한 작업 3가지를 '요약'하여 배열로 제공
+            - 원문의 핵심 의미를 절대 왜곡하지 마세요.
+            - 원문이 한국어이므로, 결과물도 반드시 한국어로 작성하세요.
 
             ## 원문 텍스트 (Original Text)
             ---
-            ${fullText}
+            ${originalFullText}
             ---
         `;
 
-        // 6. JSON 스키마 (이전과 동일, 리포트 포함)
-        const completion = await openai.chat.completions.create({
+        const simplificationCompletion = await openai.chat.completions.create({
             model: "gpt-4-turbo",
             messages: [
-                {"role": "system", "content": "You are an expert editor and analyst that returns only a single, valid JSON object."},
-                {"role": "user", "content": promptContent}
+                {"role": "system", "content": "You are an expert editor that returns only a single, valid JSON object."},
+                {"role": "user", "content": promptForSimplification}
             ],
             tools: [{
                 type: "function",
                 function: {
-                    name: "simplify_text_and_provide_report",
-                    description: "Rewrites text paragraphs based on user feedback and provides an analysis report.",
+                    name: "simplify_text",
+                    description: "Rewrites text paragraphs based on user feedback.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -241,62 +225,181 @@ exports.simplifyContents = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).ht
                                     },
                                     required: ["id", "text"]
                                 }
-                            },
-                            analysis_report: {
-                                type: "object",
-                                description: "An objective analysis of the simplification process.",
-                                properties: {
-                                    vocabulary_level_original: { type: "string", description: "Estimated vocabulary level of the original text (e.g., 'University Level')." },
-                                    vocabulary_level_simplified: { type: "string", description: "Estimated vocabulary level of the simplified text (e.g., 'High School Level')." },
-                                    readability_improvement_score: { type: "integer", description: "Readability improvement score from 1 to 100." },
-                                    key_simplifications: { 
-                                        type: "array", 
-                                        description: "A summary of the top 3 key changes made during simplification.",
-                                        items: { type: "string" }
-                                    }
-                                },
-                                required: ["vocabulary_level_original", "vocabulary_level_simplified", "readability_improvement_score", "key_simplifications"]
                             }
                         },
-                        required: ["simplified_paragraphs", "analysis_report"]
+                        required: ["simplified_paragraphs"]
                     }
                 }
             }],
-            tool_choice: { type: "function", function: { name: "simplify_text_and_provide_report" } },
+            tool_choice: { type: "function", function: { name: "simplify_text" } },
         });
 
-        // 7. 응답 처리 (이전과 동일, 정량적/정성적 리포트 포함)
-        const toolCall = completion.choices[0].message.tool_calls?.[0];
-        if (!toolCall || !toolCall.function.arguments) {
-            console.error("OpenAI did not return the expected tool call.", completion.choices[0]);
-            return response.status(500).json({ status: "error", message: "AI 모델이 유효한 응답을 생성하지 못했습니다." });
+        const simpliToolCall = simplificationCompletion.choices[0].message.tool_calls?.[0];
+        if (!simpliToolCall || !simpliToolCall.function.arguments) {
+            return response.status(500).json({ status: "error", message: "AI 모델이 유효한 순화 결과를 생성하지 못했습니다." });
         }
 
-        const result = JSON.parse(toolCall.function.arguments);
-        
-        const simplifiedFullText = result.simplified_paragraphs.map(p => p.text).join('\\n\\n');
-        const quantitativeReport = {
-            original_char_count: fullText.length,
-            simplified_char_count: simplifiedFullText.length,
-            // ... (기타 정량적 지표들) ...
-        };
-        
-        const finalResponse = {
-            status: "success",
+        const result = JSON.parse(simpliToolCall.function.arguments);
+        const simplifiedParagraphs = result.simplified_paragraphs || [];
+        const simplifiedFullText = simplifiedParagraphs.map(p => p.text).join('\\n\\n');
+
+        // --- 2단계: 작업 생성 및 클라이언트에게 즉시 응답 ---
+        const jobId = crypto.randomBytes(16).toString('hex');
+        const jobRef = db.collection('simplificationJobs').doc(jobId);
+
+        await jobRef.set({
+            userId: userId,
+            status: 'processing',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            originalText: originalFullText,
+            simplifiedText: simplifiedFullText,
+        });
+
+        // 클라이언트에게 순화된 텍스트와 작업 ID를 즉시 반환
+        response.status(200).json({
+            status: "processing",
+            jobId: jobId,
             data: {
                 title: title,
-                simplified_paragraphs: result.simplified_paragraphs || [],
-                analysis: {
-                    ...result.analysis_report,
-                    quantitative: quantitativeReport
+                simplified_paragraphs: simplifiedParagraphs,
+            }
+        });
+
+        // --- 3단계: 백그라운드에서 리포트 생성 및 저장 ---
+        // 이 함수는 await 하지 않음으로써 백그라운드에서 실행되도록 함
+        const generateAndSaveReport = async () => {
+            try {
+                const promptForReport = `
+                    ## 역할 (Persona)
+                    당신은 언어 분석가입니다. 주어진 원문과 순화된 글을 비교하여 객관적인 분석 리포트를 JSON 형태로 제출하세요.
+
+                    ## 분석 지침
+                    - 원문과 순화된 글의 어휘 수준을 각각 평가하세요. (예: '대학생 수준')
+                    - AI가 판단하는 가독성 향상 점수를 1점에서 100점 사이로 매기세요.
+                    - 순화를 위해 수행한 가장 중요한 작업 3가지를 '요약'하여 배열로 제공하세요.
+
+                    ## 원문
+                    ---
+                    ${originalFullText}
+                    ---
+
+                    ## 순화된 글
+                    ---
+                    ${simplifiedFullText}
+                    ---
+                `;
+
+                const reportCompletion = await openai.chat.completions.create({
+                    model: "gpt-4-turbo",
+                    messages: [
+                        {"role": "system", "content": "You are an expert analyst that returns only a single, valid JSON object."},
+                        {"role": "user", "content": promptForReport}
+                    ],
+                    tools: [{
+                        type: "function",
+                        function: {
+                            name: "provide_analysis_report",
+                            description: "Provides an analysis report comparing original and simplified text.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    analysis_report: {
+                                        type: "object",
+                                        properties: {
+                                            vocabulary_level_original: { type: "string" },
+                                            vocabulary_level_simplified: { type: "string" },
+                                            readability_improvement_score: { type: "integer" },
+                                            key_simplifications: { type: "array", items: { type: "string" } }
+                                        },
+                                        required: ["vocabulary_level_original", "vocabulary_level_simplified", "readability_improvement_score", "key_simplifications"]
+                                    }
+                                },
+                                required: ["analysis_report"]
+                            }
+                        }
+                    }],
+                    tool_choice: { type: "function", function: { name: "provide_analysis_report" } },
+                });
+
+                const reportToolCall = reportCompletion.choices[0].message.tool_calls?.[0];
+                if (reportToolCall && reportToolCall.function.arguments) {
+                    const reportResult = JSON.parse(reportToolCall.function.arguments);
+                    const quantitativeReport = {
+                        original_char_count: originalFullText.length,
+                        simplified_char_count: simplifiedFullText.length,
+                    };
+
+                    await jobRef.update({
+                        status: 'completed',
+                        analysis: {
+                            ...reportResult.analysis_report,
+                            quantitative: quantitativeReport
+                        }
+                    });
+                } else {
+                    throw new Error("AI 모델이 유효한 리포트를 생성하지 못했습니다.");
                 }
+            } catch (error) {
+                console.error(`[Job ID: ${jobId}] 리포트 생성 실패:`, error);
+                await jobRef.update({ status: 'failed', error: error.message });
             }
         };
 
-        response.status(200).json(finalResponse);
+        generateAndSaveReport(); // await 없이 호출하여 백그라운드 실행
 
     } catch (error) {
         console.error("API call failed or processing error:", error);
+        if (error.message.includes('토큰')) {
+            response.status(401).json({ status: "error", message: error.message });
+        } else {
+            response.status(500).json({ status: "error", message: "서버 내부 오류", details: error.message });
+        }
+    }
+});
+
+// ==================================================================
+// 4. [신규] 순화 리포트 조회 API (2단계: 생성된 리포트 조회)
+// ==================================================================
+exports.getSimplificationReport = functions.https.onRequest(async (request, response) => {
+    response.set('Access-Control-Allow-Origin', '*');
+    response.set('Access-Control-Allow-Methods', 'GET');
+    response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (request.method === 'OPTIONS') {
+        response.status(204).send('');
+        return;
+    }
+
+    try {
+        await getAuthenticatedUser(request); // 사용자 인증
+        const jobId = request.query.jobId;
+
+        if (!jobId) {
+            return response.status(400).json({ status: 'error', message: 'jobId가 필요합니다.' });
+        }
+
+        const jobRef = db.collection('simplificationJobs').doc(jobId);
+        const jobSnap = await jobRef.get();
+
+        if (!jobSnap.exists) {
+            return response.status(404).json({ status: 'error', message: '해당 작업을 찾을 수 없습니다.' });
+        }
+
+        const jobData = jobSnap.data();
+
+        if (jobData.status === 'completed') {
+            response.status(200).json({
+                status: 'completed',
+                analysis: jobData.analysis
+            });
+        } else if (jobData.status === 'processing') {
+            response.status(202).json({ status: 'processing', message: '리포트가 아직 생성 중입니다. 잠시 후 다시 시도해주세요.' });
+        } else {
+            response.status(500).json({ status: 'failed', message: '리포트 생성에 실패했습니다.', details: jobData.error });
+        }
+
+    } catch (error) {
+        console.error("Report retrieval failed:", error);
         if (error.message.includes('토큰')) {
             response.status(401).json({ status: "error", message: error.message });
         } else {
