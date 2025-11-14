@@ -45,11 +45,33 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
         }
 
         const guidelineSentences = [];
-        if (userProfile.readingProfile && userProfile.readingProfile.includes('문장')) {
-            guidelineSentences.push('사용자는 긴 문장을 읽는 데 어려움을 느끼므로, 문장을 짧고 간결하게 나누어주세요.');
+        const readingProfile = userProfile.readingProfile || {};
+
+        // 문장 가이드라인
+        if (readingProfile.sentence) {
+            switch (readingProfile.sentence) {
+                case 1:
+                    guidelineSentences.push('긴 문장을 여러 개의 짧은 문장으로 나눠주세요.');
+                    break;
+                case 2:
+                    guidelineSentences.push('긴 문장을 짧게 나누고, 복잡한 문장 구조(예: 종속절, 관계절)를 더 이해하기 쉬운 단순한 형태로 재구성해주세요.');
+                    break;
+            }
         }
-        if (userProfile.readingProfile && userProfile.readingProfile.includes('어휘')) {
-            guidelineSentences.push('사용자는 어려운 한자어, 외래어, 전문 용어에 익숙하지 않으니, 이를 쉬운 단어로 풀어서 설명해주세요.');
+
+        // 어휘 가이드라인
+        if (readingProfile.vocabulary) {
+            switch (readingProfile.vocabulary) {
+                case 1:
+                    guidelineSentences.push('어려운 한자어나 외래어를 쉬운 우리말로 바꿔주세요.');
+                    break;
+                case 2:
+                    guidelineSentences.push('어려운 한자어/외래어를 쉬운 말로 바꾸고, 일상적으로 쓰이지 않는 전문 용어나 관용구를 풀어서 설명해주세요.');
+                    break;
+                case 3:
+                    guidelineSentences.push('어려운 어휘, 전문 용어, 관용구를 쉬운 말로 바꾸고, 추상적이거나 비유적인 표현을 더 명확하고 직설적인 의미로 해석하여 전달해주세요.');
+                    break;
+            }
         }
 
         const simplificationGuidelines = `

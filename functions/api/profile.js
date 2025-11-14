@@ -71,6 +71,13 @@ const createUserProfile = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).htt
             return response.status(400).send('Invalid profile data.');
         }
 
+        /*
+         * readingProfile 데이터 구조 예시:
+         * {
+         *   "sentence": 1,    // 0: 사용 안 함, 1: 1단계, 2: 2단계
+         *   "vocabulary": 2   // 0: 사용 안 함, 1: 1단계, 2: 2단계, 3: 3단계
+         * }
+         */
         const profileData = {
             readingProfile: readingProfile,
             knownTopics: knownTopics,
