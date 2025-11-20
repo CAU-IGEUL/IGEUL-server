@@ -51,10 +51,10 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
         if (readingProfile.sentence) {
             switch (readingProfile.sentence) {
                 case 1:
-                    guidelineSentences.push('긴 문장을 여러 개의 짧은 문장으로 나눠주세요.');
+                    guidelineSentences.push('50자를 초과하는 모든 문장은 반드시 2개 이상의 짧은 문장으로 분리하세요. 이때, 원래 문장의 구조나 표현은 거의 그대로 유지하고, 문장을 나누는 작업에만 집중해야 합니다. 불필요한 단어 삭제나 문장 재구성은 하지 마세요.');
                     break;
                 case 2:
-                    guidelineSentences.push('긴 문장을 짧게 나누고, 복잡한 문장 구조(예: 종속절, 관계절)를 더 이해하기 쉬운 단순한 형태로 재구성해주세요.');
+                    guidelineSentences.push('50자를 초과하는 모든 문장은 반드시 2개 이상의 짧은 문장으로 분리하세요. 또한, 관형절이나 종속절처럼 복잡한 문장 구조를 적극적으로 해체하여, 주어와 서술어가 명확한 여러 개의 독립된 문장으로 재구성해야 합니다. 원문의 핵심 정보를 유지하는 선에서, 문장의 순서를 바꾸거나 일부 단어를 변경하여 더 이해하기 쉽게 만드는 것을 목표로 합니다.');
                     break;
             }
         }
@@ -66,17 +66,13 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
                     guidelineSentences.push('어려운 한자어나 외래어를 쉬운 우리말로 바꿔주세요.');
                     break;
                 case 2:
-                    guidelineSentences.push('어려운 한자어/외래어를 쉬운 말로 바꾸고, 일상적으로 쓰이지 않는 전문 용어나 관용구를 풀어서 설명해주세요.');
-                    break;
-                case 3:
-                    guidelineSentences.push('어려운 어휘, 전문 용어, 관용구를 쉬운 말로 바꾸고, 추상적이거나 비유적인 표현을 더 명확하고 직설적인 의미로 해석하여 전달해주세요.');
+                    guidelineSentences.push('어려운 어휘, 전문 용어, 관용구, 비유적 표현 등을 풀어서 설명하거나 직접적인 의미로 해석하여 전달해주세요.');
                     break;
             }
         }
 
         const simplificationGuidelines = `
             - 읽기 프로필: ${guidelineSentences.join(' ')}
-            - 자신 있는 분야: [${userProfile.knownTopics.join(', ')}]
         `;
         
         const originalFullText = paragraphs.map(p => p.text).join('\n\n');
@@ -92,9 +88,8 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
             ## 지침
             - **문단 구조 유지**: 원문의 문단 개수와 순서를 반드시 유지하세요. 각 문단은 개별적으로 순화되어야 합니다.
             - **정보량 보존**: 원문의 핵심 정보와 세부 사항을 생략하거나 요약하지 마세요. 글의 길이를 인위적으로 줄이는 것이 목표가 아닙니다.
-            - **어휘 및 문장 구조 순화**: 어려운 단어는 쉬운 말로 바꾸고, 복잡하고 긴 문장은 더 짧고 명확한 여러 문장으로 나누는 데 집중하세요.
-            - 사용자의 읽기 수준에 맞춰 문장의 난이도를 조절하세요.
-            - 단, 본문의 주제가 사용자가 '자신 있는 분야' 목록에 포함될 경우, 전문 용어를 굳이 순화하지 말고 그대로 사용하세요.
+            - **프로필 기반 순화**: 사용자의 '읽기 프로필'에 명시된 가이드라인을 최우선 순위로 고려하여 엄격하게 순화 작업을 수행하세요. 이 프로필은 순화의 강도와 방향을 결정하는 가장 중요한 기준입니다.
+            - **어투 및 스타일 유지**: 원문의 전반적인 어조, 스타일(예: 경어체, 구어체, 문어체, 유머러스함 등)을 최대한 유지하면서 순화하세요.
             - 원문의 핵심 의미를 절대 왜곡하지 마세요.
             - 원문이 한국어이므로, 결과물도 반드시 한국어로 작성하세요.
 
@@ -106,6 +101,7 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
 
         const simplificationCompletion = await openai.chat.completions.create({
             model: "gpt-4-turbo",
+            temperature: 0, // 일관된 답변을 위해 temperature를 0으로 설정
             messages: [
                 {"role": "system", "content": "You are an expert editor that returns only a single, valid JSON object."}, 
                 {"role": "user", "content": promptForSimplification}
