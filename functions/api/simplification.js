@@ -40,6 +40,14 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
             const guidelineSentences = [];
             const readingProfile = userProfile.readingProfile || {};
 
+            // [수정] sentence와 vocabulary가 모두 0이면 순화 거절
+            if (readingProfile.sentence === 0 && readingProfile.vocabulary === 0) {
+                return response.status(400).json({
+                    status: "rejected",
+                    message: "읽기 프로필(문장, 어휘)이 모두 설정되지 않아 순화 작업을 진행할 수 없습니다."
+                });
+            }
+
             // 문장 가이드라인
             if (readingProfile.sentence) {
                 switch (readingProfile.sentence) {
