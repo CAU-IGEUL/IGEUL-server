@@ -3,6 +3,7 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const { OpenAI } = require('openai');
+const cors = require('cors')({ origin: true });
 
 const { getAuthenticatedUser } = require('../utils/auth');
 
@@ -210,84 +211,77 @@ const processDictionaryJob = async (jobId, text) => {
 // 6. [API] 단어사전 생성(POST) 및 조회(GET) API
 // ==================================================================
 const dictionaryApi = functions.runWith({ secrets: ["OPENAI_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_CX"] })
-    .https.onRequest(async (request, response) => {
-    response.set('Access-Control-Allow-Origin', '*');
-    response.set('Access-Control-Allow-Methods', 'GET, POST');
-    response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    .https.onRequest((request, response) => {
+    cors(request, response, async () => {
+        try {
+            const user = await getAuthenticatedUser(request);
+            const userId = user.uid;
 
-    if (request.method === 'OPTIONS') {
-        response.status(204).send('');
-        return;
-    }
+            if (request.method === 'POST') {
+                // --- 작업 생성 ---
+                const { text } = request.body;
+                if (!text) {
+                    return response.status(400).json({ status: 'error', message: '분석할 텍스트가 필요합니다.' });
+                }
 
-    try {
-        const user = await getAuthenticatedUser(request);
-        const userId = user.uid;
+                const jobId = crypto.randomBytes(16).toString('hex');
+                const jobRef = db.collection('dictionaryJobs').doc(jobId);
 
-        if (request.method === 'POST') {
-            // --- 작업 생성 ---
-            const { text } = request.body;
-            if (!text) {
-                return response.status(400).json({ status: 'error', message: '분석할 텍스트가 필요합니다.' });
+                await jobRef.set({
+                    userId: userId,
+                    status: 'processing',
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+
+                // 백그라운드에서 실제 작업 시작
+                // Note: processDictionaryJob is called without await to run in background
+                processDictionaryJob(jobId, text);
+
+                response.status(202).json({
+                    status: 'processing',
+                    jobId: jobId,
+                });
+
+            } else if (request.method === 'GET') {
+                // --- 결과 조회 ---
+                const { jobId } = request.query;
+                if (!jobId) {
+                    return response.status(400).json({ status: 'error', message: 'jobId가 필요합니다.' });
+                }
+
+                const jobRef = db.collection('dictionaryJobs').doc(jobId);
+                const jobSnap = await jobRef.get();
+
+                if (!jobSnap.exists) {
+                    return response.status(404).json({ status: 'error', message: '해당 작업을 찾을 수 없습니다.' });
+                }
+
+                const jobData = jobSnap.data();
+                
+                // 다른 사용자의 결과에 접근하는 것을 방지 (선택 사항이지만 권장)
+                if (jobData.userId !== userId) {
+                    return response.status(403).json({ status: 'error', message: '접근 권한이 없습니다.' });
+                }
+
+                response.status(200).json({
+                    status: jobData.status,
+                    data: jobData.result || null,
+                    error: jobData.error || null,
+                });
+
+            } else {
+                response.status(405).send('Only GET or POST requests are allowed.');
             }
 
-            const jobId = crypto.randomBytes(16).toString('hex');
-            const jobRef = db.collection('dictionaryJobs').doc(jobId);
-
-            await jobRef.set({
-                userId: userId,
-                status: 'processing',
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-
-            // 백그라운드에서 실제 작업 시작
-            // Note: processDictionaryJob is called without await to run in background
-            processDictionaryJob(jobId, text);
-
-            response.status(202).json({
-                status: 'processing',
-                jobId: jobId,
-            });
-
-        } else if (request.method === 'GET') {
-            // --- 결과 조회 ---
-            const { jobId } = request.query;
-            if (!jobId) {
-                return response.status(400).json({ status: 'error', message: 'jobId가 필요합니다.' });
+        } catch (error) {
+            if (error.message.includes('토큰')) {
+                response.status(401).json({ status: "error", message: error.message });
+            } else {
+                console.error("Dictionary API 에러:", error);
+                response.status(500).json({ status: "error", message: "서버 내부 오류", details: error.message });
             }
-
-            const jobRef = db.collection('dictionaryJobs').doc(jobId);
-            const jobSnap = await jobRef.get();
-
-            if (!jobSnap.exists) {
-                return response.status(404).json({ status: 'error', message: '해당 작업을 찾을 수 없습니다.' });
-            }
-
-            const jobData = jobSnap.data();
-            
-            // 다른 사용자의 결과에 접근하는 것을 방지 (선택 사항이지만 권장)
-            if (jobData.userId !== userId) {
-                return response.status(403).json({ status: 'error', message: '접근 권한이 없습니다.' });
-            }
-
-            response.status(200).json({
-                status: jobData.status,
-                data: jobData.result || null,
-                error: jobData.error || null,
-            });
-
-        } else {
-            response.status(405).send('Only GET or POST requests are allowed.');
         }
-
-    } catch (error) {
-        if (error.message.includes('토큰')) {
-            response.status(401).json({ status: "error", message: error.message });
-        } else {
-            console.error("Dictionary API 에러:", error);
-            response.status(500).json({ status: "error", message: "서버 내부 오류", details: error.message });
-        }
-    }
+    });
 });
 
 module.exports = {
