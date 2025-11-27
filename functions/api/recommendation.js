@@ -3,6 +3,7 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const { OpenAI } = require('openai');
 const cors = require('cors')({ origin: true });
+const ogs = require('open-graph-scraper');
 
 const { getAuthenticatedUser } = require('../utils/auth');
 
@@ -90,15 +91,30 @@ const getReadingRecommendations = functions.runWith({ secrets: ["OPENAI_API_KEY"
                 const searchResponse = await fetch(googleSearchUrl);
                 const searchData = await searchResponse.json();
 
-                const recommendations = [];
+                let recommendations = [];
                 if (searchData.items && searchData.items.length > 0) {
-                    for (const item of searchData.items) {
-                        recommendations.push({
-                            title: item.title,
-                            link: item.link,
-                            snippet: item.snippet
-                        });
-                    }
+                    const scrapePromises = searchData.items.map(async (item) => {
+                        try {
+                            const { result } = await ogs({ url: item.link });
+                            return {
+                                title: item.title,
+                                link: item.link,
+                                snippet: item.snippet,
+                                image: result.ogImage?.[0]?.url || null
+                            };
+                        } catch (error) {
+                            console.error(`Error scraping ${item.link}:`, error.result ? error.result.error : error.message);
+                            // If scraping fails, return the item without an image
+                            return {
+                                title: item.title,
+                                link: item.link,
+                                snippet: item.snippet,
+                                image: null
+                            };
+                        }
+                    });
+
+                    recommendations = await Promise.all(scrapePromises);
                 }
 
                 response.status(200).json({
