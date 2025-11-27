@@ -219,9 +219,16 @@ const dictionaryApi = functions.runWith({ secrets: ["OPENAI_API_KEY", "GOOGLE_CS
 
             if (request.method === 'POST') {
                 // --- 작업 생성 ---
-                const { text } = request.body;
-                if (!text) {
-                    return response.status(400).json({ status: 'error', message: '분석할 텍스트가 필요합니다.' });
+                const { paragraphs } = request.body;
+
+                if (!paragraphs || !Array.isArray(paragraphs) || paragraphs.some(p => typeof p.text !== 'string')) {
+                    return response.status(400).json({ status: 'error', message: '유효한 paragraphs 배열이 필요합니다.' });
+                }
+
+                const fullText = paragraphs.map(p => p.text).join('\n\n');
+
+                if (!fullText.trim()) {
+                    return response.status(400).json({ status: 'error', message: '분석할 텍스트가 비어 있습니다.' });
                 }
 
                 const jobId = crypto.randomBytes(16).toString('hex');
@@ -235,7 +242,7 @@ const dictionaryApi = functions.runWith({ secrets: ["OPENAI_API_KEY", "GOOGLE_CS
 
                 // 백그라운드에서 실제 작업 시작
                 // Note: processDictionaryJob is called without await to run in background
-                processDictionaryJob(jobId, text);
+                processDictionaryJob(jobId, fullText);
 
                 response.status(202).json({
                     status: 'processing',
