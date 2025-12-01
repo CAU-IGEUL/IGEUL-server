@@ -27,6 +27,19 @@ const getReadingRecommendations = functions.runWith({ secrets: ["OPENAI_API_KEY"
                 const user = await getAuthenticatedUser(request);
                 const userId = user.uid;
 
+                // 사용자 프로필을 가져와 추천 기능 활성화 여부 확인
+                const userProfileSnap = await db.collection('users').doc(userId).get();
+                const userProfile = userProfileSnap.exists ? userProfileSnap.data() : {};
+
+                if (!userProfile.getRecommendations) {
+                    return response.status(200).json({
+                        status: 'disabled',
+                        message: '추천 기능이 비활성화되어 있습니다.',
+                        recommendations: []
+                    });
+                }
+
+
                 const { paragraphs } = request.body;
 
                 if (!paragraphs || !Array.isArray(paragraphs) || paragraphs.some(p => typeof p.text !== 'string')) {
@@ -76,9 +89,6 @@ const getReadingRecommendations = functions.runWith({ secrets: ["OPENAI_API_KEY"
                     return response.status(404).json({ status: "error", message: "텍스트에서 핵심 키워드를 추출하지 못했습니다." });
                 }
 
-                // (Optional) Fetch user profile to get knownTopics and incorporate into search query
-                const userProfileSnap = await db.collection('users').doc(userId).get();
-                const userProfile = userProfileSnap.exists ? userProfileSnap.data() : { knownTopics: [] };
                 const knownTopics = userProfile.knownTopics || [];
 
                 // Combine keywords and known topics to form a comprehensive search query

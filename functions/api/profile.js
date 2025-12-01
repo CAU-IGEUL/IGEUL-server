@@ -69,6 +69,7 @@ const createUserProfile = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).htt
                 knownTopics: knownTopics,
                 email: user.email,
                 displayName: user.name || null,
+                getRecommendations: true, // 추천 기능 활성화 여부
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             };
 
@@ -91,7 +92,50 @@ const createUserProfile = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).htt
     });
 });
 
+// ==================================================================
+// 3. [API] 추천 활성화/비활성화 설정 함수
+// ==================================================================
+const updateRecommendationSettings = functions.https.onRequest((request, response) => {
+    cors(request, response, async () => {
+        if (request.method !== 'POST') {
+            return response.status(405).send('Only POST requests are allowed.');
+        }
+
+        try {
+            const user = await getAuthenticatedUser(request);
+            const userId = user.uid;
+            const { getRecommendations } = request.body;
+
+            if (typeof getRecommendations !== 'boolean') {
+                return response.status(400).send('Invalid "getRecommendations" value.');
+            }
+
+            const userProfileRef = db.collection('users').doc(userId);
+            await userProfileRef.update({
+                getRecommendations: getRecommendations,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            response.status(200).json({
+                status: 'success',
+                message: 'Recommendation settings updated successfully.',
+                settings: {
+                    getRecommendations: getRecommendations
+                }
+            });
+        } catch (error) {
+            if (error.message.includes('토큰')) {
+                response.status(401).json({ status: "error", message: error.message });
+            } else {
+                response.status(500).json({ status: "error", message: "서버 내부 오류", details: error.message });
+            }
+        }
+    });
+});
+
+
 module.exports = {
     getUserProfile,
-    createUserProfile
+    createUserProfile,
+    updateRecommendationSettings
 };
