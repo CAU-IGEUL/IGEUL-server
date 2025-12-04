@@ -76,7 +76,11 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
                 - 읽기 프로필: ${guidelineSentences.join(' ')}
             `;
             
-            const originalFullText = paragraphs.map(p => p.text).join('\n\n');
+            // 고유한 문단 구분자 정의
+            const PARAGRAPH_SEPARATOR = "---PARAGRAPH_SEPARATOR---";
+            
+            // 원문 텍스트를 문단 구분자로 연결하여 전송
+            const originalFullText = paragraphs.map(p => p.text).join(`\n${PARAGRAPH_SEPARATOR}\n`);
 
             // --- 1단계: 텍스트 순화 요청 ---
             const promptForSimplification = `
@@ -87,12 +91,13 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
                 ${simplificationGuidelines}
 
                 ## 지침
-                - **문단 구조 유지**: 원문의 문단 개수와 순서를 반드시 유지하세요. 각 문단은 개별적으로 순화되어야 합니다.
+                - **문단 구조 유지**: 원문 텍스트는 '${PARAGRAPH_SEPARATOR}' 구분자로 나뉘어진 여러 문단으로 구성되어 있습니다. 순화된 결과에서도 반드시 이 구분자를 사용하여 원문과 동일한 수의 문단과 순서를 유지해야 합니다. 각 문단은 개별적으로 순화되어야 합니다.
                 - **정보량 보존**: 원문의 핵심 정보와 세부 사항을 생략하거나 요약하지 마세요. 글의 길이를 인위적으로 줄이는 것이 목표가 아닙니다.
                 - **프로필 기반 순화**: 사용자의 '읽기 프로필'에 명시된 가이드라인을 최우선 순위로 고려하여 엄격하게 순화 작업을 수행하세요. 이 프로필은 순화의 강도와 방향을 결정하는 가장 중요한 기준입니다.
                 - **어투 및 스타일 유지**: 원문의 전반적인 어조, 스타일(예: 경어체, 구어체, 문어체, 유머러스함 등)을 최대한 유지하면서 순화하세요.
                 - 원문의 핵심 의미를 절대 왜곡하지 마세요.
                 - 원문이 한국어이므로, 결과물도 반드시 한국어로 작성하세요.
+                - 순화된 텍스트 외에 어떠한 추가 설명이나 안내 문구도 포함하지 마세요. 오직 순화된 텍스트만 반환해야 합니다.
 
                 ## 원문 텍스트 (Original Text)
                 ---
@@ -104,45 +109,21 @@ const simplifyText = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).https.on
                 model: "gpt-4-turbo",
                 temperature: 0, // 일관된 답변을 위해 temperature를 0으로 설정
                 messages: [
-                    {"role": "system", "content": "You are an expert editor that returns only a single, valid JSON object."}, 
+                    {"role": "system", "content": "You are an expert editor who processes text and returns only the simplified text, maintaining the specified paragraph structure and using the provided paragraph separator. Do not include any additional explanations or formatting outside of the simplified content."}, 
                     {"role": "user", "content": promptForSimplification}
                 ],
-                tools: [{
-                    type: "function",
-                    function: {
-                        name: "simplify_text",
-                        description: "Rewrites text paragraphs based on user feedback.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                simplified_paragraphs: {
-                                    type: "array",
-                                    description: "The list of simplified paragraphs, maintaining original IDs.",
-                                    items: {
-                                        type: "object",
-                                        properties: {
-                                            id: { type: "integer", description: "The original paragraph ID." },
-                                            text: { type: "string", description: "The simplified paragraph text." }
-                                        },
-                                        required: ["id", "text"]
-                                    }
-                                }
-                            },
-                            required: ["simplified_paragraphs"]
-                        }
-                    }
-                }],
-                tool_choice: { type: "function", function: { name: "simplify_text" } },
             });
 
-            const simpliToolCall = simplificationCompletion.choices[0].message.tool_calls?.[0];
-            if (!simpliToolCall || !simpliToolCall.function.arguments) {
-                return response.status(500).json({ status: "error", message: "AI 모델이 유효한 순화 결과를 생성하지 못했습니다." });
-            }
+            const simplifiedFullText = simplificationCompletion.choices[0].message.content || '';
 
-            const result = JSON.parse(simpliToolCall.function.arguments);
-            const simplifiedParagraphs = result.simplified_paragraphs || [];
-            const simplifiedFullText = simplifiedParagraphs.map(p => p.text).join('\n\n');
+            // AI 응답을 문단 구분자로 분리하여 simplifiedParagraphs 배열 재구성
+            const simplifiedTexts = simplifiedFullText.split(`\n${PARAGRAPH_SEPARATOR}\n`).map(text => text.trim());
+            
+            // 원본 paragraphs의 ID를 유지하며 순화된 문단 배열 생성
+            const simplifiedParagraphs = paragraphs.map((p, index) => ({
+                id: p.id,
+                text: simplifiedTexts[index] || p.text // AI 응답 문단이 없으면 원본 문단 사용 (비상책)
+            }));
 
             // --- 2단계: 작업 생성 및 클라이언트에게 즉시 응답 ---
             const jobId = crypto.randomBytes(16).toString('hex');

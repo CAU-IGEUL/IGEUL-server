@@ -177,7 +177,9 @@ const processDictionaryJob = async (jobId, text) => {
             // 2b. Google Custom Search API로 이미지 URL 검색
             let imageUrl = '';
             if (googleCseApiKey && googleCseCx) {
-                const googleSearchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleCseApiKey}&cx=${googleCseCx}&q=${encodeURIComponent(word)}&searchType=image&num=1`;
+                // [수정] 검색어에 한 줄 정의를 추가하여 이미지 검색의 정확도 향상
+                const searchQuery = `${word} ${shortDefinition}`;
+                const googleSearchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleCseApiKey}&cx=${googleCseCx}&q=${encodeURIComponent(searchQuery)}&searchType=image&num=1`;
                 try {
                     const searchResponse = await fetch(googleSearchUrl);
                     const searchData = await searchResponse.json();

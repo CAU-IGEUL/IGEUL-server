@@ -57,29 +57,31 @@ const createUserProfile = functions.runWith({ secrets: ["OPENAI_API_KEY"] }).htt
                 return response.status(400).send('Invalid profile data.');
             }
 
-            /*
-             * readingProfile 데이터 구조 예시:
-             * {
-             *   "sentence": 1,    // 0: 사용 안 함, 1: 1단계, 2: 2단계
-             *   "vocabulary": 2   // 0: 사용 안 함, 1: 1단계, 2: 2단계, 3: 3단계
-             * }
-             */
+            const userProfileRef = db.collection('users').doc(userId);
+            const userProfileSnap = await userProfileRef.get();
+
             const profileData = {
                 readingProfile: readingProfile,
                 knownTopics: knownTopics,
                 email: user.email,
                 displayName: user.name || null,
-                getRecommendations: true, // 추천 기능 활성화 여부
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             };
 
-            const userProfileRef = db.collection('users').doc(userId);
+            // 프로필이 처음 생성될 때만 getRecommendations를 true로 설정
+            if (!userProfileSnap.exists) {
+                profileData.getRecommendations = true;
+            }
+
             await userProfileRef.set(profileData, { merge: true });
+
+            // 업데이트된 전체 프로필 데이터를 응답으로 보내기 위해 다시 조회
+            const updatedProfileSnap = await userProfileRef.get();
 
             response.status(201).json({
                 status: 'success',
                 message: 'Profile created/updated successfully.',
-                profile: profileData
+                profile: updatedProfileSnap.data()
             });
 
         } catch (error) {
